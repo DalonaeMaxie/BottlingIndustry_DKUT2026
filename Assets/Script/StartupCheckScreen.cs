@@ -1,6 +1,7 @@
 ﻿using UnityEngine;
 using UnityEngine.UI;
-using Text = UnityEngine.UI.Text; // Explicitly resolves ambiguity with System.Net.Mime.MediaTypeNames.Text
+using Image = UnityEngine.UI.Image; // Resolves System.Net.Mime.MediaTypeNames.Image collision
+using Text = UnityEngine.UI.Text;   // Resolves System.Net.Mime.MediaTypeNames.Text collision
 
 public class StartupCheckScreen : MonoBehaviour
 {
@@ -14,7 +15,7 @@ public class StartupCheckScreen : MonoBehaviour
 
     private void Awake()
     {
-        if (bridge == null) bridge = FindObjectOfType<UnityPLCConnectBridge>();
+        if (bridge == null) bridge = Object.FindAnyObjectByType<UnityPLCConnectBridge>();
         BuildUI();
         FreezeSimulation(true);
     }
@@ -23,17 +24,23 @@ public class StartupCheckScreen : MonoBehaviour
     {
         if (_started) return;
 
+        if (bridge == null)
+        {
+            bridge = Object.FindAnyObjectByType<UnityPLCConnectBridge>();
+            if (bridge == null) return;
+        }
+
         bool check1 = bridge.serviceExeFound;
         bool check2 = bridge.serviceAlive;
-        bool check3 = bridge.statusByte != 1;
-        bool check4 = bridge.statusByte != 2;
-        bool check5 = bridge.isConnected;
+        bool check3 = bridge.statusByte != 1; // 1 = Disconnected / Service initialization pending
+        bool check4 = bridge.statusByte != 2; // 2 = Target instance not found
+        bool check5 = bridge.isConnected;    // 4 = Fully connected and operational
 
-        UpdateCheckUI(0, check1, "1. UnityPLCConnect Executable Found", "Place UnityPLCConnect folder in application root");
-        UpdateCheckUI(1, check2, "2. UnityPLCConnect Service Active", "Background service initializing...");
-        UpdateCheckUI(2, check3, "3. Siemens PLCSIM Advanced Service Running", "Open Siemens PLCSIM Advanced Control Panel");
-        UpdateCheckUI(3, check4, $"4. Virtual Instance Registered ('{bridge.instanceName}')", $"Create Virtual CPU '{bridge.instanceName}' in PLCSIM");
-        UpdateCheckUI(4, check5, "5. Target CPU State: RUN", GetPlcStateHint(bridge.plcOperatingState));
+        UpdateCheckUI(0, check1, "1. PLCSimUnity Executable Found", "Place PLCSimUnity application folder in project root");
+        UpdateCheckUI(1, check2, "2. PLCSimUnity Control Service Active", "Background service initializing...");
+        UpdateCheckUI(2, check3, "3. Siemens PLCSIM Advanced Service Running", "Start Siemens PLCSIM Advanced Virtual Network Adapter");
+        UpdateCheckUI(3, check4, $"4. Virtual Instance Registered ('{bridge.instanceName}')", $"Create or start Virtual CPU '{bridge.instanceName}' in PLCSIM Manager");
+        UpdateCheckUI(4, check5, "5. Target CPU State: RUN & Connected", GetPlcStateHint(bridge.plcOperatingState));
 
         _startButton.interactable = check1 && check2 && check3 && check4 && check5;
     }
@@ -62,9 +69,9 @@ public class StartupCheckScreen : MonoBehaviour
     public void OnStartClicked()
     {
         _started = true;
-        _canvas.enabled = false;
+        if (_canvas != null) _canvas.enabled = false;
         FreezeSimulation(false);
-        bridge.BeginSimulation();
+        if (bridge != null) bridge.BeginSimulation();
     }
 
     private void FreezeSimulation(bool freeze)
