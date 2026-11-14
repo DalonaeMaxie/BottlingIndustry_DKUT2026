@@ -1,32 +1,42 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.IO.MemoryMappedFiles;
 using UnityEngine;
 using Debug = UnityEngine.Debug;
-using Application = UnityEngine.Application; // Resolves System.Net.Mime.MediaTypeNames.Application collision
 
 public class UnityPLCConnectBridge : MonoBehaviour
 {
-    [System.Serializable]
-    public struct TagDefinition
+    private const int HEADER_SIZE = 128;
+
+    // PLCSIM Block (0..63)
+    private const int OFFSET_STATUS_BYTE = 0;         // 4 = PLCSim Connected
+    private const int OFFSET_PLC_STATE = 1;           // 5 = PLC Run
+
+    // Unity 3D Engine Block (96..127)
+    private const int OFFSET_UNITY_STATUS = 96;       // 1 = Unity Connected
+    private const int OFFSET_UNITY_PID_ALT = 98;      // Int32 Unity PID (mirrors WinCC base+2 layout)
+    private const int OFFSET_UNITY_HEARTBEAT = 104;   // Int32 rolling heartbeat
+    private const int OFFSET_UNITY_PID = 108;         // Int32 Unity PID
+
+    // Process Image I/O Buffers
+    private const int OFFSET_INPUTS = 128;            // Unity -> PLCSIM (%I)
+    private const int OFFSET_OUTPUTS = 192;           // PLCSIM -> Unity (%Q)
+
+    [Serializable]
+    public class TagMapping
     {
         public string tagName;
-        public enum DataType { Bit, Byte, Int16, Float32 }
-        public DataType dataType;
-        public enum Direction { InputToPLC, OutputFromPLC }
-        public Direction direction;
+        public bool isOutput;
         public int byteOffset;
-        public int bitIndex;
+        [Range(0, 7)] public int bitIndex;
+        public bool currentValue;
     }
 
     [Header("PLC Connection Settings")]
-    public string instanceName = "AutoDiscover";
+    public string instanceName = "Project2";
     public string shmName = "PLCSimUnity_SharedMemory";
-    [Tooltip("Optional full path to PLCSimUnity.exe if not placed inside the Unity project folder.")]
     public string customExePath = "";
     public int inputByteCount = 64;
     public int outputByteCount = 64;
@@ -37,171 +47,134 @@ public class UnityPLCConnectBridge : MonoBehaviour
     public bool serviceAlive;
     public byte statusByte;
     public byte plcOperatingState;
-    public byte couplerLoopStage;
+    public byte outputByte0_Q0;
     public bool isConnected;
+    public bool simulationStarted;
 
     [Header("Tag Mapping Configuration")]
-    public List<TagDefinition> tagMappings = new List<TagDefinition>();
+    public List<TagMapping> tagMappings = new List<TagMapping>();
+
+    public bool IsConnected => isConnected && serviceAlive;
+    public byte[] InputBuffer => _inputBuffer;
+    public byte[] OutputBuffer => _outputBuffer;
 
     private MemoryMappedFile _mmf;
-    private MemoryMappedViewAccessor _view;
-    private Process _connectProcess;
-
+    private MemoryMappedViewAccessor _accessor;
+    private byte[] _headerBuffer = new byte[HEADER_SIZE];
+    private byte[] _prevHeaderBuffer = new byte[HEADER_SIZE];
     private byte[] _inputBuffer;
     private byte[] _outputBuffer;
-    private Dictionary<string, TagDefinition> _tagDictionary = new Dictionary<string, TagDefinition>();
 
-    private byte _lastHeartbeat;
-    private float _heartbeatTimer;
-    private bool _loggedAccessWarning = false;
-
-    // Buffer Memory Layout Constants
-    private const int HeaderOffset = 0;
-    private const int UnityHeartbeatOffset = 100;
-    private const int InputBufferOffset = 128; // Header reserves 128 bytes
+    private string _resolvedExePath;
+    private int _unityHeartbeat;
+    private byte _lastLoggedQ0;
+    private float _lastHeaderChangeTime;
+    private float _nextReconnectAttemptTime;
+    private bool _loggedPrivilegeError;
+    private bool _loggedConnectionSuccess;
 
     private void Awake()
     {
-        _inputBuffer = new byte[inputByteCount];
-        _outputBuffer = new byte[outputByteCount];
-        RebuildTagDictionary();
+        EnsureBuffers();
+        ResolveExecutablePath();
     }
 
-    private void Start()
+    private void OnEnable()
     {
-        LaunchService();
-        StartCoroutine(OpenSharedMemoryRoutine());
-    }
+        EnsureBuffers();
+        ResolveExecutablePath();
 
-    public void RebuildTagDictionary()
-    {
-        _tagDictionary.Clear();
-        foreach (var tag in tagMappings)
+        if (!IsServiceProcessRunning() && serviceExeFound)
         {
-            if (!string.IsNullOrEmpty(tag.tagName) && !_tagDictionary.ContainsKey(tag.tagName))
-            {
-                _tagDictionary.Add(tag.tagName, tag);
-            }
-        }
-    }
-
-    public void LaunchService()
-    {
-        // 1. Check if PLCSimUnity is already running
-        Process[] existing = Process.GetProcessesByName("PLCSimUnity");
-        if (existing.Length > 0)
-        {
-            _connectProcess = existing[0];
-            serviceExeFound = true;
-            return;
-        }
-
-        // 2. Check explicit custom path first, then search standard project output paths
-        string exePath = null;
-        if (!string.IsNullOrEmpty(customExePath) && File.Exists(customExePath))
-        {
-            exePath = customExePath;
+            TryLaunchCouplerService();
+            _nextReconnectAttemptTime = Time.unscaledTime + Mathf.Max(0.1f, serviceStartDelay);
         }
         else
         {
-            string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-            string[] possiblePaths = new string[]
-            {
-                Path.Combine(projectRoot, "PLCSimUnity", "PLCSimUnity.exe"),
-                Path.Combine(projectRoot, "PLCSimUnity", "bin", "x64", "Debug", "PLCSimUnity.exe"),
-                Path.Combine(projectRoot, "PLCSimUnity", "bin", "x64", "Release", "PLCSimUnity.exe"),
-                Path.Combine(projectRoot, "PLCSimUnity", "bin", "Debug", "PLCSimUnity.exe"),
-                Path.Combine(projectRoot, "PLCSimUnity", "bin", "Release", "PLCSimUnity.exe"),
-                Path.Combine(projectRoot, "PLCSimUnity", "bin", "Debug", "net8.0-windows", "PLCSimUnity.exe"),
-                Path.Combine(projectRoot, "PLCSimUnity", "bin", "Release", "net8.0-windows", "PLCSimUnity.exe"),
-                Path.Combine(projectRoot, "PLCSimUnity.exe"),
-                Path.Combine(Application.dataPath, "PLCSimUnity.exe")
-            };
+            TryOpenSharedMemory();
+        }
+    }
 
-            foreach (var path in possiblePaths)
-            {
-                if (File.Exists(path))
-                {
-                    exePath = path;
-                    break;
-                }
-            }
+    private void Update()
+    {
+        SyncSharedMemory();
+    }
+
+    private void OnDisable()
+    {
+        DisconnectAndCleanup();
+    }
+
+    private void OnDestroy()
+    {
+        DisconnectAndCleanup();
+    }
+
+    public void BeginSimulation()
+    {
+        simulationStarted = true;
+        EnsureBuffers();
+
+        if (_accessor == null)
+        {
+            ResolveExecutablePath();
+            if (!IsServiceProcessRunning() && serviceExeFound)
+                TryLaunchCouplerService();
+            else
+                TryOpenSharedMemory();
         }
 
-        serviceExeFound = exePath != null;
+        Debug.Log("[UnityPLCConnectBridge] Simulation started.");
+    }
 
-        if (!serviceExeFound)
-        {
-            Debug.LogError("[UnityPLCConnectBridge] PLCSimUnity.exe not found. Start PLCSimUnity.exe manually or set 'Custom Exe Path' in the Inspector.");
+    private void EnsureBuffers()
+    {
+        int inSize = Mathf.Max(1, inputByteCount);
+        int outSize = Mathf.Max(1, outputByteCount);
+
+        if (_inputBuffer == null || _inputBuffer.Length != inSize)
+            _inputBuffer = new byte[inSize];
+
+        if (_outputBuffer == null || _outputBuffer.Length != outSize)
+            _outputBuffer = new byte[outSize];
+    }
+
+    private void ResolveExecutablePath()
+    {
+        _resolvedExePath = string.Empty;
+        serviceExeFound = false;
+
+        if (string.IsNullOrWhiteSpace(customExePath))
             return;
-        }
 
-        string args = $"--instance \"{instanceName}\" --inputs {inputByteCount} --outputs {outputByteCount} --shm \"{shmName}\"";
-
-        ProcessStartInfo psi = new ProcessStartInfo
-        {
-            FileName = exePath,
-            Arguments = args,
-            UseShellExecute = true,
-            WorkingDirectory = Path.GetDirectoryName(exePath)
-        };
+        string cleaned = customExePath.Trim().Trim('"').Trim();
+        if (string.IsNullOrEmpty(cleaned))
+            return;
 
         try
         {
-            _connectProcess = Process.Start(psi);
+            if (Directory.Exists(cleaned))
+                cleaned = Path.Combine(cleaned, "PLCSimUnity.exe");
+            else if (!cleaned.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(cleaned + ".exe"))
+                cleaned += ".exe";
+
+            if (File.Exists(cleaned))
+            {
+                _resolvedExePath = cleaned;
+                serviceExeFound = true;
+            }
         }
         catch (Exception ex)
         {
-            Debug.LogError($"[UnityPLCConnectBridge] Failed to launch service process: {ex.Message}");
+            Debug.LogWarning($"[UnityPLCConnectBridge] Invalid Custom Exe Path '{customExePath}': {ex.Message}");
         }
     }
 
-    private IEnumerator OpenSharedMemoryRoutine()
+    private bool IsServiceProcessRunning()
     {
-        yield return new WaitForSecondsRealtime(serviceStartDelay);
-
-        while (_mmf == null)
-        {
-            bool openedSuccessfully = false;
-            try
-            {
-                _mmf = MemoryMappedFile.OpenExisting(shmName);
-                _view = _mmf.CreateViewAccessor();
-                Debug.Log($"[UnityPLCConnectBridge] Shared Memory Connected: '{shmName}'");
-                openedSuccessfully = true;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                if (!_loggedAccessWarning)
-                {
-                    Debug.LogWarning($"[UnityPLCConnectBridge] Access denied opening '{shmName}'. Ensure Program.cs creates the MemoryMappedFile with WorldSid FullControl permissions.");
-                    _loggedAccessWarning = true;
-                }
-            }
-            catch
-            {
-                // Background service is still initializing memory mapped file
-            }
-
-            if (!openedSuccessfully)
-            {
-                yield return new WaitForSecondsRealtime(0.5f);
-            }
-        }
-    }
-
-    private bool IsServiceProcessExited()
-    {
-        if (_connectProcess == null) return false;
-
         try
         {
-            return _connectProcess.HasExited;
-        }
-        catch (Win32Exception)
-        {
-            // Expected when PLCSimUnity.exe runs as Administrator and Unity Editor runs as standard user
-            return Process.GetProcessesByName("PLCSimUnity").Length == 0;
+            return Process.GetProcessesByName("PLCSimUnity").Length > 0;
         }
         catch
         {
@@ -209,111 +182,261 @@ public class UnityPLCConnectBridge : MonoBehaviour
         }
     }
 
-    private void Update()
+    private void TryLaunchCouplerService()
     {
-        if (IsServiceProcessExited())
-        {
-            Debug.LogWarning("[UnityPLCConnectBridge] Service process exited. Relaunching...");
-            _connectProcess = null;
-            LaunchService();
-        }
-
-        if (_view == null || !_view.CanRead) return;
+        if (!serviceExeFound || string.IsNullOrEmpty(_resolvedExePath))
+            return;
 
         try
         {
-            // Write rolling Unity Heartbeat tick to Header Offset 100 for Dashboard Form
-            _view.Write(UnityHeartbeatOffset, Environment.TickCount);
-
-            // Read Telemetry Header
-            statusByte = _view.ReadByte(HeaderOffset + 0);
-            plcOperatingState = _view.ReadByte(HeaderOffset + 1);
-            byte currentHeartbeat = _view.ReadByte(HeaderOffset + 2);
-            couplerLoopStage = _view.ReadByte(HeaderOffset + 3);
-
-            if (currentHeartbeat != _lastHeartbeat)
+            var startInfo = new ProcessStartInfo
             {
-                _lastHeartbeat = currentHeartbeat;
-                _heartbeatTimer = 0f;
-                serviceAlive = true;
-            }
-            else
-            {
-                _heartbeatTimer += Time.unscaledDeltaTime;
-                if (_heartbeatTimer > 3.0f) serviceAlive = false;
-            }
-
-            // Status Byte 4 = Connected
-            isConnected = serviceAlive && statusByte == 4;
-
-            if (!isConnected) return;
-
-            // Perform synchronous I/O buffer transfers automatically once connected
-            int outputBufferOffset = InputBufferOffset + inputByteCount;
-            _view.WriteArray(InputBufferOffset, _inputBuffer, 0, inputByteCount);
-            _view.ReadArray(outputBufferOffset, _outputBuffer, 0, outputByteCount);
+                FileName = _resolvedExePath,
+                WorkingDirectory = Path.GetDirectoryName(_resolvedExePath) ?? string.Empty,
+                UseShellExecute = true
+            };
+            Process.Start(startInfo);
+            Debug.Log($"[UnityPLCConnectBridge] Launched coupler service: {_resolvedExePath}");
         }
         catch (Exception ex)
         {
-            Debug.LogError($"[UnityPLCConnectBridge] SHM Exchange Error: {ex.Message}");
+            Debug.LogWarning($"[UnityPLCConnectBridge] Could not auto-start PLCSimUnity.exe ({ex.Message}).");
         }
     }
 
-    // Retained for compatibility if any external UI script invokes it
-    public void BeginSimulation() { }
-
-    // --- Core Low-Level Accessor API ---
-
-    public void SetInputBit(int byteOffset, int bitIndex, bool value)
+    private bool TryOpenSharedMemory()
     {
-        if (byteOffset < 0 || byteOffset >= inputByteCount || bitIndex < 0 || bitIndex > 7) return;
+        if (_accessor != null && _mmf != null)
+            return true;
+
+        try
+        {
+            int totalRequiredSize = OFFSET_OUTPUTS + Mathf.Max(1, outputByteCount);
+            _mmf = MemoryMappedFile.OpenExisting(shmName, MemoryMappedFileRights.ReadWrite);
+            _accessor = _mmf.CreateViewAccessor(0, totalRequiredSize, MemoryMappedFileAccess.ReadWrite);
+
+            _loggedPrivilegeError = false;
+            _lastHeaderChangeTime = Time.unscaledTime;
+
+            if (!_loggedConnectionSuccess)
+            {
+                Debug.Log($"[UnityPLCConnectBridge] Shared Memory Connected: '{shmName}'");
+                _loggedConnectionSuccess = true;
+            }
+
+            return true;
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            if (!_loggedPrivilegeError)
+            {
+                Debug.LogError(
+                    "[UnityPLCConnectBridge] Access denied opening shared memory. " +
+                    "Launch Unity Hub / Unity Editor as Administrator to match PLCSimUnity.exe.");
+                _loggedPrivilegeError = true;
+            }
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[UnityPLCConnectBridge] Shared memory open failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    private void SyncSharedMemory()
+    {
+        EnsureBuffers();
+
+        if (_accessor == null)
+        {
+            serviceAlive = false;
+            isConnected = false;
+
+            if (Time.unscaledTime >= _nextReconnectAttemptTime)
+            {
+                _nextReconnectAttemptTime = Time.unscaledTime + 1.0f;
+                TryOpenSharedMemory();
+            }
+            return;
+        }
+
+        try
+        {
+            // 1. Write Unity Handshake into Unity block (96..111) without touching PLCSIM (0..63) or WinCC (64..95)
+            int pid = Process.GetCurrentProcess().Id;
+            _unityHeartbeat++;
+            _accessor.Write(OFFSET_UNITY_STATUS, (byte)1);
+            _accessor.Write(OFFSET_UNITY_PID_ALT, pid);
+            _accessor.Write(OFFSET_UNITY_HEARTBEAT, _unityHeartbeat);
+            _accessor.Write(OFFSET_UNITY_PID, pid);
+
+            // 2. Read Header Status ([0] = StatusByte, [1] = PlcOperatingState)
+            _accessor.ReadArray(0, _headerBuffer, 0, HEADER_SIZE);
+
+            bool headerChanged = false;
+            for (int i = 0; i < HEADER_SIZE; i++)
+            {
+                if (i >= OFFSET_UNITY_STATUS && i < 112) continue;
+
+                if (_headerBuffer[i] != _prevHeaderBuffer[i])
+                {
+                    headerChanged = true;
+                    _prevHeaderBuffer[i] = _headerBuffer[i];
+                }
+            }
+
+            if (headerChanged)
+                _lastHeaderChangeTime = Time.unscaledTime;
+
+            bool heartbeatFresh = (Time.unscaledTime - _lastHeaderChangeTime) < 2.5f;
+            serviceAlive = heartbeatFresh || IsServiceProcessRunning();
+
+            statusByte = _headerBuffer[OFFSET_STATUS_BYTE];
+            plcOperatingState = _headerBuffer[OFFSET_PLC_STATE];
+
+            // 3. Exchange Process Image I/O (%I at 128, %Q at 192)
+            _accessor.WriteArray(OFFSET_INPUTS, _inputBuffer, 0, _inputBuffer.Length);
+            _accessor.ReadArray(OFFSET_OUTPUTS, _outputBuffer, 0, _outputBuffer.Length);
+
+            outputByte0_Q0 = _outputBuffer[0];
+            if (outputByte0_Q0 != _lastLoggedQ0)
+            {
+                _lastLoggedQ0 = outputByte0_Q0;
+                Debug.Log($"[UnityPLCConnectBridge] %Q0 changed -> 0x{outputByte0_Q0:X2} (Q0.0={(outputByte0_Q0 & 1) != 0}, Q0.1={(outputByte0_Q0 & 2) != 0})");
+            }
+
+            UpdateTagMappings();
+
+            isConnected = serviceAlive && (statusByte >= 4 || plcOperatingState == 5 || plcOperatingState == 8);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[UnityPLCConnectBridge] Shared memory sync interrupted: {ex.Message}");
+            DisconnectAndCleanup();
+            _nextReconnectAttemptTime = Time.unscaledTime + 1.0f;
+        }
+    }
+
+    private void UpdateTagMappings()
+    {
+        if (tagMappings == null || tagMappings.Count == 0)
+            return;
+
+        for (int i = 0; i < tagMappings.Count; i++)
+        {
+            TagMapping mapping = tagMappings[i];
+            if (mapping == null) continue;
+
+            if (mapping.isOutput)
+                mapping.currentValue = ReadOutputBit(mapping.byteOffset, mapping.bitIndex);
+            else
+                WriteInputBit(mapping.byteOffset, mapping.bitIndex, mapping.currentValue);
+        }
+    }
+
+    private void DisconnectAndCleanup()
+    {
+        if (_accessor != null)
+        {
+            try
+            {
+                _accessor.Write(OFFSET_UNITY_STATUS, (byte)0);
+                _accessor.Write(OFFSET_UNITY_PID_ALT, 0);
+                _accessor.Write(OFFSET_UNITY_PID, 0);
+                _accessor.Flush();
+            }
+            catch { }
+
+            _accessor.Dispose();
+            _accessor = null;
+        }
+
+        if (_mmf != null)
+        {
+            _mmf.Dispose();
+            _mmf = null;
+        }
+
+        serviceAlive = false;
+        isConnected = false;
+        simulationStarted = false;
+        _loggedConnectionSuccess = false;
+    }
+
+    // =========================================================================
+    // Public I/O API for RealVirtualPLCSimAdapter
+    // =========================================================================
+
+    public bool ReadOutputBit(int byteOffset, int bitIndex)
+    {
+        if (_outputBuffer == null || byteOffset < 0 || byteOffset >= _outputBuffer.Length)
+            return false;
+        if (bitIndex < 0 || bitIndex > 7)
+            return false;
+
+        return (_outputBuffer[byteOffset] & (1 << bitIndex)) != 0;
+    }
+
+    public bool GetOutputBit(int byteOffset, int bitIndex) => ReadOutputBit(byteOffset, bitIndex);
+
+    public void WriteInputBit(int byteOffset, int bitIndex, bool value)
+    {
+        if (_inputBuffer == null || byteOffset < 0 || byteOffset >= _inputBuffer.Length)
+            return;
+        if (bitIndex < 0 || bitIndex > 7)
+            return;
+
         if (value)
             _inputBuffer[byteOffset] |= (byte)(1 << bitIndex);
         else
             _inputBuffer[byteOffset] &= (byte)~(1 << bitIndex);
     }
 
-    public bool GetOutputBit(int byteOffset, int bitIndex)
+    public void SetInputBit(int byteOffset, int bitIndex, bool value) => WriteInputBit(byteOffset, bitIndex, value);
+
+    public byte ReadOutputByte(int byteOffset)
     {
-        if (byteOffset < 0 || byteOffset >= outputByteCount || bitIndex < 0 || bitIndex > 7) return false;
-        return (_outputBuffer[byteOffset] & (1 << bitIndex)) != 0;
+        if (_outputBuffer == null || byteOffset < 0 || byteOffset >= _outputBuffer.Length)
+            return 0;
+        return _outputBuffer[byteOffset];
     }
 
-    public void SetInputFloat(int byteOffset, float value)
+    public void WriteInputByte(int byteOffset, byte value)
     {
-        if (byteOffset < 0 || byteOffset + 3 >= inputByteCount) return;
+        if (_inputBuffer == null || byteOffset < 0 || byteOffset >= _inputBuffer.Length)
+            return;
+        _inputBuffer[byteOffset] = value;
+    }
+
+    public float ReadOutputFloat(int byteOffset)
+    {
+        if (_outputBuffer == null || byteOffset < 0 || byteOffset + 3 >= _outputBuffer.Length)
+            return 0f;
+
+        byte[] bytes =
+        {
+            _outputBuffer[byteOffset + 3],
+            _outputBuffer[byteOffset + 2],
+            _outputBuffer[byteOffset + 1],
+            _outputBuffer[byteOffset]
+        };
+        return BitConverter.ToSingle(bytes, 0);
+    }
+
+    public void WriteInputFloat(int byteOffset, float value)
+    {
+        if (_inputBuffer == null || byteOffset < 0 || byteOffset + 3 >= _inputBuffer.Length)
+            return;
+
         byte[] bytes = BitConverter.GetBytes(value);
-        Array.Copy(bytes, 0, _inputBuffer, byteOffset, 4);
-    }
-
-    public float GetOutputFloat(int byteOffset)
-    {
-        if (byteOffset < 0 || byteOffset + 3 >= outputByteCount) return 0f;
-        return BitConverter.ToSingle(_outputBuffer, byteOffset);
-    }
-
-    // --- Dynamic Tag API ---
-
-    public void SetTagBool(string tagName, bool value)
-    {
-        if (_tagDictionary.TryGetValue(tagName, out var tag) && tag.direction == TagDefinition.Direction.InputToPLC)
-        {
-            SetInputBit(tag.byteOffset, tag.bitIndex, value);
-        }
-    }
-
-    public bool GetTagBool(string tagName)
-    {
-        if (_tagDictionary.TryGetValue(tagName, out var tag) && tag.direction == TagDefinition.Direction.OutputFromPLC)
-        {
-            return GetOutputBit(tag.byteOffset, tag.bitIndex);
-        }
-        return false;
-    }
-
-    private void OnDestroy()
-    {
-        _view?.Dispose();
-        _mmf?.Dispose();
+        _inputBuffer[byteOffset] = bytes[3];
+        _inputBuffer[byteOffset + 1] = bytes[2];
+        _inputBuffer[byteOffset + 2] = bytes[1];
+        _inputBuffer[byteOffset + 3] = bytes[0];
     }
 }
