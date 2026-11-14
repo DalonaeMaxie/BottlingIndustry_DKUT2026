@@ -2395,7 +2395,9 @@ MonoBehaviour:
       m_Calls: []
   Autoconnected: 0
   UpdateEnable: 0
-  ConnectionInfo: []
+  ConnectionInfo:
+  - Behavior: {fileID: 500493048}
+    ConnectionName: SensorOccupied
   Metadata:
     Metadata: []
   Status:
@@ -3048,7 +3050,9 @@ MonoBehaviour:
       m_Calls: []
   Autoconnected: 0
   UpdateEnable: 0
-  ConnectionInfo: []
+  ConnectionInfo:
+  - Behavior: {fileID: 1227593338}
+    ConnectionName: SensorOccupied
   Metadata:
     Metadata: []
   Status:
@@ -5159,7 +5163,9 @@ MonoBehaviour:
       m_Calls: []
   Autoconnected: 0
   UpdateEnable: 0
-  ConnectionInfo: []
+  ConnectionInfo:
+  - Behavior: {fileID: 1631889736}
+    ConnectionName: SensorOccupied
   Metadata:
     Metadata: []
   Status:
@@ -7639,7 +7645,9 @@ MonoBehaviour:
       m_Calls: []
   Autoconnected: 0
   UpdateEnable: 0
-  ConnectionInfo: []
+  ConnectionInfo:
+  - Behavior: {fileID: 405638479}
+    ConnectionName: SensorOccupied
   Metadata:
     Metadata: []
   Status:
@@ -8566,7 +8574,9 @@ MonoBehaviour:
       m_Calls: []
   Autoconnected: 0
   UpdateEnable: 0
-  ConnectionInfo: []
+  ConnectionInfo:
+  - Behavior: {fileID: 487257788}
+    ConnectionName: SensorOccupied
   Metadata:
     Metadata: []
   Status:
@@ -16941,6 +16951,81 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Renderer: {fileID: 807051349}
   m_MaterialIndex: 0
+--- !u!1 &1465632246
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1465632247}
+  - component: {fileID: 1465632248}
+  m_Layer: 0
+  m_Name: I0_6_EStop
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1465632247
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1465632246}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 2121289132}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1465632248
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1465632246}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bce0fbdba242f0f4bafbe54ff70c4233, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: realvirtual.base::realvirtual.PLCInputBool
+  Name: 
+  Active: 0
+  FromTemplate: {fileID: 0}
+  realvirtualController: {fileID: 0}
+  HideNonG44Components: 0
+  SceneIsAdditive: 0
+  ForceStop: 0
+  IsNetworkOwner: 1
+  Comment: 
+  OriginDataType: 
+  Settings:
+    Active: 1
+    DetectBoolFlanks: 0
+    Override: 0
+  EventSignalChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  Autoconnected: 0
+  UpdateEnable: 0
+  ConnectionInfo:
+  - Behavior: {fileID: 2309648953787039353}
+    ConnectionName: stateSignal
+  Metadata:
+    Metadata: []
+  Status:
+    Connected: 0
+    ValueOverride: 0
+    Value: 0
+    OldValue: 0
+  ChangedToTrue: 0
+  ChangedToFalse: 0
 --- !u!1 &1470990444
 GameObject:
   m_ObjectHideFlags: 0
@@ -19060,6 +19145,81 @@ RectTransform:
   m_CorrespondingSourceObject: {fileID: 1035790433963668018, guid: 085ce58b196caa446a8545c9dd388793, type: 3}
   m_PrefabInstance: {fileID: 1556058166}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &1716215838
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1716215839}
+  - component: {fileID: 1716215840}
+  m_Layer: 0
+  m_Name: I0_7_StopButton
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1716215839
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1716215838}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 2121289132}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1716215840
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1716215838}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bce0fbdba242f0f4bafbe54ff70c4233, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: realvirtual.base::realvirtual.PLCInputBool
+  Name: 
+  Active: 0
+  FromTemplate: {fileID: 0}
+  realvirtualController: {fileID: 0}
+  HideNonG44Components: 0
+  SceneIsAdditive: 0
+  ForceStop: 0
+  IsNetworkOwner: 1
+  Comment: 
+  OriginDataType: 
+  Settings:
+    Active: 1
+    DetectBoolFlanks: 0
+    Override: 0
+  EventSignalChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  Autoconnected: 0
+  UpdateEnable: 0
+  ConnectionInfo:
+  - Behavior: {fileID: 6945705887363271562}
+    ConnectionName: stateSignal
+  Metadata:
+    Metadata: []
+  Status:
+    Connected: 0
+    ValueOverride: 0
+    Value: 0
+    OldValue: 0
+  ChangedToTrue: 0
+  ChangedToFalse: 0
 --- !u!1001 &1727242449
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -20597,7 +20757,9 @@ MonoBehaviour:
       m_Calls: []
   Autoconnected: 0
   UpdateEnable: 0
-  ConnectionInfo: []
+  ConnectionInfo:
+  - Behavior: {fileID: 1067043347}
+    ConnectionName: SensorOccupied
   Metadata:
     Metadata: []
   Status:
@@ -20721,7 +20883,7 @@ MonoBehaviour:
     bitIndex: 0
   - signal: {fileID: 1358849400}
     byteOffset: 0
-    bitIndex: 0
+    bitIndex: 1
   plcFloatOutputs: []
   plcBoolInputs:
   - signal: {fileID: 345049830}
@@ -20729,19 +20891,22 @@ MonoBehaviour:
     bitIndex: 0
   - signal: {fileID: 801084084}
     byteOffset: 0
-    bitIndex: 0
+    bitIndex: 1
   - signal: {fileID: 1945661197}
     byteOffset: 0
-    bitIndex: 0
+    bitIndex: 2
   - signal: {fileID: 261715528}
     byteOffset: 0
-    bitIndex: 0
+    bitIndex: 3
   - signal: {fileID: 487899179}
     byteOffset: 0
-    bitIndex: 0
+    bitIndex: 4
   - signal: {fileID: 685672640}
     byteOffset: 0
-    bitIndex: 0
+    bitIndex: 5
+  - signal: {fileID: 1465632248}
+    byteOffset: 0
+    bitIndex: 6
   plcFloatInputs: []
 --- !u!114 &1945709010
 MonoBehaviour:
@@ -22857,6 +23022,8 @@ Transform:
   - {fileID: 261715527}
   - {fileID: 487899178}
   - {fileID: 685672639}
+  - {fileID: 1465632247}
+  - {fileID: 1716215839}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1001 &2125541156
@@ -115843,6 +116010,7 @@ GameObject:
   - component: {fileID: 4545285518476504876}
   - component: {fileID: 4514787628691847516}
   - component: {fileID: 8871106108166904469}
+  - component: {fileID: 8871106108166904470}
   m_Layer: 0
   m_Name: EStop_Red_Mushroom_Cap
   m_TagString: Untagged
@@ -300658,13 +300826,40 @@ GameObject:
   - component: {fileID: 3546353039099581678}
   - component: {fileID: 2432559759296017478}
   - component: {fileID: 493791670330635473}
+  - component: {fileID: 6945705887363271563}
   m_Layer: 0
-  m_Name: Pushbutton_1_Red_Lens
+  m_Name: StopButton_Red_Lens
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
+--- !u!114 &6945705887363271563
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6945705887363271562}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 47ce80e84aad20c4f8ac5dfdb6c6605b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: realvirtual.base::realvirtual.PushButton3D
+  Name: 
+  Active: 0
+  FromTemplate: {fileID: 0}
+  realvirtualController: {fileID: 0}
+  HideNonG44Components: 0
+  SceneIsAdditive: 0
+  ForceStop: 0
+  IsNetworkOwner: 1
+  stateSignal: {fileID: 1716215840}
+  lightSignal: {fileID: 0}
+  label: 
+  timer: 0.5
+  toggle: 0
+  activeOnStart: 0
 --- !u!1 &6946499311711799586
 GameObject:
   m_ObjectHideFlags: 0
@@ -364323,52 +364518,13 @@ GameObject:
   - component: {fileID: 3300996494844584599}
   - component: {fileID: 3561803760299347589}
   - component: {fileID: 7828374885731319114}
-  - component: {fileID: 8473757216203576828}
   m_Layer: 0
-  m_Name: Pushbutton_1_Red_Chrome_Collar
+  m_Name: StopButton_Red_Chrome_Collar
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &8473757216203576828
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8473757216203576827}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: cbf300d14eec46049936dc5f023984d2, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: realvirtual.base::realvirtual.HMI_Pushbutton
-  Name: 
-  Active: 0
-  FromTemplate: {fileID: 0}
-  realvirtualController: {fileID: 0}
-  HideNonG44Components: 0
-  SceneIsAdditive: 0
-  ForceStop: 0
-  IsNetworkOwner: 1
-  Color: {r: 0, g: 0, b: 0, a: 0}
-  ColorMouseOver: {r: 0, g: 0, b: 0, a: 0}
-  UseSkinColors: 1
-  EventOnValueChanged:
-    m_PersistentCalls:
-      m_Calls: []
-  bgImg: {fileID: 0}
-  MinHighTime: 1
-  ButtonText: Button Text
-  TextSize: 18
-  FontColor: {r: 1, g: 1, b: 1, a: 1}
-  SignalButtonPushed: {fileID: 0}
-  Color1Signal: {fileID: 0}
-  Color1: {r: 0, g: 0, b: 0, a: 0}
-  Color2Signal: {fileID: 0}
-  Color2: {r: 0, g: 0, b: 0, a: 0}
-  Color3Signal: {fileID: 0}
-  Color3: {r: 0, g: 0, b: 0, a: 0}
 --- !u!1 &8473877515070257130
 GameObject:
   m_ObjectHideFlags: 0
@@ -380107,6 +380263,32 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
+--- !u!114 &8871106108166904470
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2309648953787039353}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 47ce80e84aad20c4f8ac5dfdb6c6605b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: realvirtual.base::realvirtual.PushButton3D
+  Name: 
+  Active: 0
+  FromTemplate: {fileID: 0}
+  realvirtualController: {fileID: 0}
+  HideNonG44Components: 0
+  SceneIsAdditive: 0
+  ForceStop: 0
+  IsNetworkOwner: 1
+  stateSignal: {fileID: 1465632248}
+  lightSignal: {fileID: 0}
+  label: 
+  timer: 0.5
+  toggle: 0
+  activeOnStart: 0
 --- !u!4 &8874050445898889810
 Transform:
   m_ObjectHideFlags: 0
