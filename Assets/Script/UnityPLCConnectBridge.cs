@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.IO.MemoryMappedFiles;
@@ -25,6 +26,8 @@ public class UnityPLCConnectBridge : MonoBehaviour
     [Header("PLC Connection Settings")]
     public string instanceName = "AutoDiscover";
     public string shmName = "PLCSimUnity_SharedMemory";
+    [Tooltip("Optional full path to PLCSimUnity.exe if not placed inside the Unity project folder.")]
+    public string customExePath = "";
     public int inputByteCount = 64;
     public int outputByteCount = 64;
     public float serviceStartDelay = 0.5f;
@@ -50,7 +53,7 @@ public class UnityPLCConnectBridge : MonoBehaviour
 
     private byte _lastHeartbeat;
     private float _heartbeatTimer;
-    private bool _simulationStarted = false;
+    private bool _loggedAccessWarning = false;
 
     // Buffer Memory Layout Constants
     private const int HeaderOffset = 0;
@@ -93,24 +96,35 @@ public class UnityPLCConnectBridge : MonoBehaviour
             return;
         }
 
-        // 2. Multi-path search for PLCSimUnity.exe
-        string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-        string[] possiblePaths = new string[]
-        {
-            Path.Combine(projectRoot, "PLCSimUnity", "PLCSimUnity.exe"),
-            Path.Combine(projectRoot, "PLCSimUnity", "bin", "Debug", "net8.0-windows", "PLCSimUnity.exe"),
-            Path.Combine(projectRoot, "PLCSimUnity", "bin", "Release", "net8.0-windows", "PLCSimUnity.exe"),
-            Path.Combine(projectRoot, "PLCSimUnity.exe"),
-            Path.Combine(Application.dataPath, "PLCSimUnity.exe")
-        };
-
+        // 2. Check explicit custom path first, then search standard project output paths
         string exePath = null;
-        foreach (var path in possiblePaths)
+        if (!string.IsNullOrEmpty(customExePath) && File.Exists(customExePath))
         {
-            if (File.Exists(path))
+            exePath = customExePath;
+        }
+        else
+        {
+            string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+            string[] possiblePaths = new string[]
             {
-                exePath = path;
-                break;
+                Path.Combine(projectRoot, "PLCSimUnity", "PLCSimUnity.exe"),
+                Path.Combine(projectRoot, "PLCSimUnity", "bin", "x64", "Debug", "PLCSimUnity.exe"),
+                Path.Combine(projectRoot, "PLCSimUnity", "bin", "x64", "Release", "PLCSimUnity.exe"),
+                Path.Combine(projectRoot, "PLCSimUnity", "bin", "Debug", "PLCSimUnity.exe"),
+                Path.Combine(projectRoot, "PLCSimUnity", "bin", "Release", "PLCSimUnity.exe"),
+                Path.Combine(projectRoot, "PLCSimUnity", "bin", "Debug", "net8.0-windows", "PLCSimUnity.exe"),
+                Path.Combine(projectRoot, "PLCSimUnity", "bin", "Release", "net8.0-windows", "PLCSimUnity.exe"),
+                Path.Combine(projectRoot, "PLCSimUnity.exe"),
+                Path.Combine(Application.dataPath, "PLCSimUnity.exe")
+            };
+
+            foreach (var path in possiblePaths)
+            {
+                if (File.Exists(path))
+                {
+                    exePath = path;
+                    break;
+                }
             }
         }
 
@@ -118,7 +132,7 @@ public class UnityPLCConnectBridge : MonoBehaviour
 
         if (!serviceExeFound)
         {
-            Debug.LogError($"[UnityPLCConnectBridge] PLCSimUnity executable missing! Checked project root: {projectRoot}");
+            Debug.LogError("[UnityPLCConnectBridge] PLCSimUnity.exe not found. Start PLCSimUnity.exe manually or set 'Custom Exe Path' in the Inspector.");
             return;
         }
 
@@ -156,6 +170,14 @@ public class UnityPLCConnectBridge : MonoBehaviour
                 Debug.Log($"[UnityPLCConnectBridge] Shared Memory Connected: '{shmName}'");
                 openedSuccessfully = true;
             }
+            catch (UnauthorizedAccessException)
+            {
+                if (!_loggedAccessWarning)
+                {
+                    Debug.LogWarning($"[UnityPLCConnectBridge] Access denied opening '{shmName}'. Ensure Program.cs creates the MemoryMappedFile with WorldSid FullControl permissions.");
+                    _loggedAccessWarning = true;
+                }
+            }
             catch
             {
                 // Background service is still initializing memory mapped file
@@ -168,11 +190,31 @@ public class UnityPLCConnectBridge : MonoBehaviour
         }
     }
 
+    private bool IsServiceProcessExited()
+    {
+        if (_connectProcess == null) return false;
+
+        try
+        {
+            return _connectProcess.HasExited;
+        }
+        catch (Win32Exception)
+        {
+            // Expected when PLCSimUnity.exe runs as Administrator and Unity Editor runs as standard user
+            return Process.GetProcessesByName("PLCSimUnity").Length == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private void Update()
     {
-        if (_connectProcess != null && _connectProcess.HasExited)
+        if (IsServiceProcessExited())
         {
             Debug.LogWarning("[UnityPLCConnectBridge] Service process exited. Relaunching...");
+            _connectProcess = null;
             LaunchService();
         }
 
@@ -181,7 +223,7 @@ public class UnityPLCConnectBridge : MonoBehaviour
         try
         {
             // Write rolling Unity Heartbeat tick to Header Offset 100 for Dashboard Form
-            _view.Write(UnityHeartbeatOffset, System.Environment.TickCount);
+            _view.Write(UnityHeartbeatOffset, Environment.TickCount);
 
             // Read Telemetry Header
             statusByte = _view.ReadByte(HeaderOffset + 0);
@@ -204,9 +246,9 @@ public class UnityPLCConnectBridge : MonoBehaviour
             // Status Byte 4 = Connected
             isConnected = serviceAlive && statusByte == 4;
 
-            if (!_simulationStarted) return;
+            if (!isConnected) return;
 
-            // Perform synchronous I/O buffer transfers
+            // Perform synchronous I/O buffer transfers automatically once connected
             int outputBufferOffset = InputBufferOffset + inputByteCount;
             _view.WriteArray(InputBufferOffset, _inputBuffer, 0, inputByteCount);
             _view.ReadArray(outputBufferOffset, _outputBuffer, 0, outputByteCount);
@@ -217,16 +259,14 @@ public class UnityPLCConnectBridge : MonoBehaviour
         }
     }
 
-    public void BeginSimulation()
-    {
-        _simulationStarted = true;
-    }
+    // Retained for compatibility if any external UI script invokes it
+    public void BeginSimulation() { }
 
     // --- Core Low-Level Accessor API ---
 
     public void SetInputBit(int byteOffset, int bitIndex, bool value)
     {
-        if (byteOffset < 0 || byteOffset >= inputByteCount) return;
+        if (byteOffset < 0 || byteOffset >= inputByteCount || bitIndex < 0 || bitIndex > 7) return;
         if (value)
             _inputBuffer[byteOffset] |= (byte)(1 << bitIndex);
         else
@@ -235,7 +275,7 @@ public class UnityPLCConnectBridge : MonoBehaviour
 
     public bool GetOutputBit(int byteOffset, int bitIndex)
     {
-        if (byteOffset < 0 || byteOffset >= outputByteCount) return false;
+        if (byteOffset < 0 || byteOffset >= outputByteCount || bitIndex < 0 || bitIndex > 7) return false;
         return (_outputBuffer[byteOffset] & (1 << bitIndex)) != 0;
     }
 
