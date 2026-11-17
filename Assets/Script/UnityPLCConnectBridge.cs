@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.MemoryMappedFiles;
+using System.Runtime.InteropServices;
+using System.Text;
 using UnityEngine;
 using Debug = UnityEngine.Debug;
 
@@ -10,15 +12,11 @@ public class UnityPLCConnectBridge : MonoBehaviour
 {
     private const int HEADER_SIZE = 128;
 
-    // PLCSIM Block (0..63)
-    private const int OFFSET_STATUS_BYTE = 0;         // 4 = PLCSim Connected
-    private const int OFFSET_PLC_STATE = 1;           // 5 = PLC Run
-
-    // Unity 3D Engine Block (96..127)
-    private const int OFFSET_UNITY_STATUS = 96;       // 1 = Unity Connected
-    private const int OFFSET_UNITY_PID_ALT = 98;      // Int32 Unity PID (mirrors WinCC base+2 layout)
-    private const int OFFSET_UNITY_HEARTBEAT = 104;   // Int32 rolling heartbeat
-    private const int OFFSET_UNITY_PID = 108;         // Int32 Unity PID
+    // PLCSimUnity Header Offsets
+    private const int OFFSET_STATUS_BYTE = 0;         // Byte: PLCSIM connection status (Read-Only)
+    private const int OFFSET_PLC_STATE = 1;           // Byte: PLC operating state (Read-Only)
+    private const int OFFSET_HEARTBEAT = 2;           // Byte: PLCSimUnity rolling heartbeat (Read-Only)
+    private const int OFFSET_UNITY_TICK = 100;        // Int32: Unity Environment.TickCount heartbeat (Read by DashboardForm)
 
     // Process Image I/O Buffers
     private const int OFFSET_INPUTS = 128;            // Unity -> PLCSIM (%I)
@@ -41,12 +39,14 @@ public class UnityPLCConnectBridge : MonoBehaviour
     public int inputByteCount = 64;
     public int outputByteCount = 64;
     public float serviceStartDelay = 0.5f;
+    public bool autoConnectPlcInstance = true;
 
     [Header("Status Diagnostics")]
     public bool serviceExeFound;
     public bool serviceAlive;
     public byte statusByte;
     public byte plcOperatingState;
+    public byte serviceHeartbeat;
     public byte outputByte0_Q0;
     public bool isConnected;
     public bool simulationStarted;
@@ -61,17 +61,18 @@ public class UnityPLCConnectBridge : MonoBehaviour
     private MemoryMappedFile _mmf;
     private MemoryMappedViewAccessor _accessor;
     private byte[] _headerBuffer = new byte[HEADER_SIZE];
-    private byte[] _prevHeaderBuffer = new byte[HEADER_SIZE];
     private byte[] _inputBuffer;
     private byte[] _outputBuffer;
 
     private string _resolvedExePath;
-    private int _unityHeartbeat;
+    private byte _lastServiceHeartbeat;
     private byte _lastLoggedQ0;
-    private float _lastHeaderChangeTime;
+    private float _lastHeartbeatTime;
     private float _nextReconnectAttemptTime;
+    private float _nextAutoConnectAttemptTime;
     private bool _loggedPrivilegeError;
     private bool _loggedConnectionSuccess;
+    private bool _loggedPlcRunAttached;
 
     private void Awake()
     {
@@ -123,6 +124,9 @@ public class UnityPLCConnectBridge : MonoBehaviour
             else
                 TryOpenSharedMemory();
         }
+
+        if (!isConnected && autoConnectPlcInstance)
+            TryTriggerCouplerAutoConnect(forceImmediate: true);
 
         Debug.Log("[UnityPLCConnectBridge] Simulation started.");
     }
@@ -189,14 +193,20 @@ public class UnityPLCConnectBridge : MonoBehaviour
 
         try
         {
+            string args = string.IsNullOrWhiteSpace(instanceName)
+                ? "--auto-connect"
+                : $"--instance \"{instanceName.Trim()}\" --auto-connect";
+
             var startInfo = new ProcessStartInfo
             {
                 FileName = _resolvedExePath,
+                Arguments = args,
                 WorkingDirectory = Path.GetDirectoryName(_resolvedExePath) ?? string.Empty,
                 UseShellExecute = true
             };
             Process.Start(startInfo);
-            Debug.Log($"[UnityPLCConnectBridge] Launched coupler service: {_resolvedExePath}");
+            _nextAutoConnectAttemptTime = Time.unscaledTime + 1.5f;
+            Debug.Log($"[UnityPLCConnectBridge] Launched coupler service: {_resolvedExePath} {args}");
         }
         catch (Exception ex)
         {
@@ -216,7 +226,7 @@ public class UnityPLCConnectBridge : MonoBehaviour
             _accessor = _mmf.CreateViewAccessor(0, totalRequiredSize, MemoryMappedFileAccess.ReadWrite);
 
             _loggedPrivilegeError = false;
-            _lastHeaderChangeTime = Time.unscaledTime;
+            _lastHeartbeatTime = Time.unscaledTime;
 
             if (!_loggedConnectionSuccess)
             {
@@ -267,39 +277,28 @@ public class UnityPLCConnectBridge : MonoBehaviour
 
         try
         {
-            // 1. Write Unity Handshake into Unity block (96..111) without touching PLCSIM (0..63) or WinCC (64..95)
-            int pid = Process.GetCurrentProcess().Id;
-            _unityHeartbeat++;
-            _accessor.Write(OFFSET_UNITY_STATUS, (byte)1);
-            _accessor.Write(OFFSET_UNITY_PID_ALT, pid);
-            _accessor.Write(OFFSET_UNITY_HEARTBEAT, _unityHeartbeat);
-            _accessor.Write(OFFSET_UNITY_PID, pid);
+            // 1. Write Unity Environment.TickCount at offset 100 for DashboardForm telemetry
+            int unityTick = Environment.TickCount;
+            if (unityTick == 0) unityTick = 1;
+            _accessor.Write(OFFSET_UNITY_TICK, unityTick);
 
-            // 2. Read Header Status ([0] = StatusByte, [1] = PlcOperatingState)
+            // 2. Read Header Status (0..127 owned by PLCSimUnity)
             _accessor.ReadArray(0, _headerBuffer, 0, HEADER_SIZE);
-
-            bool headerChanged = false;
-            for (int i = 0; i < HEADER_SIZE; i++)
-            {
-                if (i >= OFFSET_UNITY_STATUS && i < 112) continue;
-
-                if (_headerBuffer[i] != _prevHeaderBuffer[i])
-                {
-                    headerChanged = true;
-                    _prevHeaderBuffer[i] = _headerBuffer[i];
-                }
-            }
-
-            if (headerChanged)
-                _lastHeaderChangeTime = Time.unscaledTime;
-
-            bool heartbeatFresh = (Time.unscaledTime - _lastHeaderChangeTime) < 2.5f;
-            serviceAlive = heartbeatFresh || IsServiceProcessRunning();
 
             statusByte = _headerBuffer[OFFSET_STATUS_BYTE];
             plcOperatingState = _headerBuffer[OFFSET_PLC_STATE];
+            serviceHeartbeat = _headerBuffer[OFFSET_HEARTBEAT];
 
-            // 3. Exchange Process Image I/O (%I at 128, %Q at 192)
+            if (serviceHeartbeat != _lastServiceHeartbeat)
+            {
+                _lastServiceHeartbeat = serviceHeartbeat;
+                _lastHeartbeatTime = Time.unscaledTime;
+            }
+
+            bool heartbeatFresh = (Time.unscaledTime - _lastHeartbeatTime) < 2.5f;
+            serviceAlive = heartbeatFresh || IsServiceProcessRunning();
+
+            // 3. Exchange Process Image I/O (%I written at 128, %Q read at 192)
             _accessor.WriteArray(OFFSET_INPUTS, _inputBuffer, 0, _inputBuffer.Length);
             _accessor.ReadArray(OFFSET_OUTPUTS, _outputBuffer, 0, _outputBuffer.Length);
 
@@ -312,7 +311,23 @@ public class UnityPLCConnectBridge : MonoBehaviour
 
             UpdateTagMappings();
 
-            isConnected = serviceAlive && (statusByte >= 4 || plcOperatingState == 5 || plcOperatingState == 8);
+            bool plcRunning = statusByte >= 4 || plcOperatingState == 5 || plcOperatingState == 8;
+            isConnected = serviceAlive && plcRunning;
+
+            if (isConnected)
+            {
+                if (!_loggedPlcRunAttached)
+                {
+                    Debug.Log($"[UnityPLCConnectBridge] Attached to PLC instance '{instanceName}' (StatusByte={statusByte}, OperatingState={plcOperatingState}).");
+                    _loggedPlcRunAttached = true;
+                }
+            }
+            else
+            {
+                _loggedPlcRunAttached = false;
+                if (serviceAlive && autoConnectPlcInstance)
+                    TryTriggerCouplerAutoConnect(forceImmediate: false);
+            }
         }
         catch (Exception ex)
         {
@@ -321,6 +336,86 @@ public class UnityPLCConnectBridge : MonoBehaviour
             _nextReconnectAttemptTime = Time.unscaledTime + 1.0f;
         }
     }
+
+    private void TryTriggerCouplerAutoConnect(bool forceImmediate)
+    {
+        if (!forceImmediate && Time.unscaledTime < _nextAutoConnectAttemptTime)
+            return;
+
+        _nextAutoConnectAttemptTime = Time.unscaledTime + 2.0f;
+
+#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
+        try
+        {
+            Process[] procs = Process.GetProcessesByName("PLCSimUnity");
+            for (int i = 0; i < procs.Length; i++)
+            {
+                IntPtr mainHwnd = procs[i].MainWindowHandle;
+                if (mainHwnd == IntPtr.Zero) continue;
+
+                IntPtr enableAutoDiscoverBtn = IntPtr.Zero;
+                IntPtr connectSelectedBtn = IntPtr.Zero;
+
+                EnumChildWindows(mainHwnd, (hwnd, lParam) =>
+                {
+                    string text = GetControlText(hwnd);
+                    if (string.IsNullOrEmpty(text))
+                        return true;
+
+                    if (text.StartsWith("Enable Auto-Discover", StringComparison.OrdinalIgnoreCase))
+                        enableAutoDiscoverBtn = hwnd;
+                    else if (text.IndexOf("Connect to Selected Instance", StringComparison.OrdinalIgnoreCase) >= 0)
+                        connectSelectedBtn = hwnd;
+
+                    return true;
+                }, IntPtr.Zero);
+
+                if (enableAutoDiscoverBtn != IntPtr.Zero && IsWindowEnabled(enableAutoDiscoverBtn))
+                {
+                    SendMessage(enableAutoDiscoverBtn, BM_CLICK, IntPtr.Zero, IntPtr.Zero);
+                    Debug.Log($"[UnityPLCConnectBridge] Triggered 'Enable Auto-Discover Mode' on PLCSimUnity for '{instanceName}'.");
+                    return;
+                }
+
+                if (connectSelectedBtn != IntPtr.Zero && IsWindowEnabled(connectSelectedBtn))
+                {
+                    SendMessage(connectSelectedBtn, BM_CLICK, IntPtr.Zero, IntPtr.Zero);
+                    Debug.Log($"[UnityPLCConnectBridge] Triggered 'Connect to Selected Instance' on PLCSimUnity for '{instanceName}'.");
+                    return;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[UnityPLCConnectBridge] Auto-connect trigger skipped: {ex.Message}");
+        }
+#endif
+    }
+
+#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
+    private const uint BM_CLICK = 0x00F5;
+
+    private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumChildWindows(IntPtr hwndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowEnabled(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    private static string GetControlText(IntPtr hwnd)
+    {
+        var sb = new StringBuilder(128);
+        int len = GetWindowText(hwnd, sb, sb.Capacity);
+        return len > 0 ? sb.ToString() : string.Empty;
+    }
+#endif
 
     private void UpdateTagMappings()
     {
@@ -345,9 +440,7 @@ public class UnityPLCConnectBridge : MonoBehaviour
         {
             try
             {
-                _accessor.Write(OFFSET_UNITY_STATUS, (byte)0);
-                _accessor.Write(OFFSET_UNITY_PID_ALT, 0);
-                _accessor.Write(OFFSET_UNITY_PID, 0);
+                _accessor.Write(OFFSET_UNITY_TICK, 0);
                 _accessor.Flush();
             }
             catch { }
@@ -366,6 +459,7 @@ public class UnityPLCConnectBridge : MonoBehaviour
         isConnected = false;
         simulationStarted = false;
         _loggedConnectionSuccess = false;
+        _loggedPlcRunAttached = false;
     }
 
     // =========================================================================

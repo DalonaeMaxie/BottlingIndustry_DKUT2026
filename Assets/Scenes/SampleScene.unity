@@ -10338,6 +10338,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::DriveSignalConnector
   jogForwardSignal: {fileID: 1358849400}
   jogBackwardSignal: {fileID: 0}
+  bridge: {fileID: 1945709010}
+  useDirectBridgeFallback: 1
+  fallbackByteOffset: 0
+  fallbackBitIndex: 1
 --- !u!1 &894369180
 GameObject:
   m_ObjectHideFlags: 0
@@ -11697,7 +11701,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1028741796}
   m_Layer: 0
-  m_Name: Drive
+  m_Name: Motor_1
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -20972,10 +20976,12 @@ MonoBehaviour:
   inputByteCount: 64
   outputByteCount: 64
   serviceStartDelay: 0.5
+  autoConnectPlcInstance: 1
   serviceExeFound: 0
   serviceAlive: 0
   statusByte: 0
   plcOperatingState: 0
+  serviceHeartbeat: 0
   outputByte0_Q0: 0
   isConnected: 0
   simulationStarted: 0
@@ -350607,7 +350613,7 @@ GameObject:
   m_Component:
   - component: {fileID: 8154363799573779495}
   m_Layer: 0
-  m_Name: Drive
+  m_Name: Motor_2
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -351009,6 +351015,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::DriveSignalConnector
   jogForwardSignal: {fileID: 1615779927}
   jogBackwardSignal: {fileID: 0}
+  bridge: {fileID: 1945709010}
+  useDirectBridgeFallback: 1
+  fallbackByteOffset: 0
+  fallbackBitIndex: 0
 --- !u!4 &8154363799573779517
 Transform:
   m_ObjectHideFlags: 0

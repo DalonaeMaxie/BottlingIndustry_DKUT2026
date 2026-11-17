@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using realvirtual;
+using Debug = UnityEngine.Debug;
 
 public class RealVirtualPLCSimAdapter : MonoBehaviour
 {
@@ -38,16 +39,38 @@ public class RealVirtualPLCSimAdapter : MonoBehaviour
     [Header("realvirtual Sensors -> PLC Inputs (%I)")]
     public List<BoolInputMapping> plcBoolInputs = new List<BoolInputMapping>();
 
+    private bool[] _lastBoolOutputs;
+
     private void Awake()
     {
         if (bridge == null)
             bridge = GetComponent<UnityPLCConnectBridge>();
+        if (bridge == null)
+            bridge = FindAnyObjectByType<UnityPLCConnectBridge>();
+    }
+
+    private void Start()
+    {
+        if (bridge == null)
+            bridge = FindAnyObjectByType<UnityPLCConnectBridge>();
+
+        _lastBoolOutputs = new bool[plcBoolOutputs.Count];
+        Debug.Log($"[RealVirtualPLCSimAdapter] Initialized | BridgeFound={(bridge != null)} | BoolOutputs={plcBoolOutputs.Count} | BoolInputs={plcBoolInputs.Count}");
     }
 
     private void FixedUpdate()
     {
-        if (bridge == null || !bridge.IsConnected)
+        if (bridge == null)
+        {
+            bridge = FindAnyObjectByType<UnityPLCConnectBridge>();
+            if (bridge == null) return;
+        }
+
+        if (!bridge.IsConnected)
             return;
+
+        if (_lastBoolOutputs == null || _lastBoolOutputs.Length != plcBoolOutputs.Count)
+            _lastBoolOutputs = new bool[plcBoolOutputs.Count];
 
         // 1. Read PLC Outputs (%Q) -> Drive realvirtual PLCOutputBool signals
         for (int i = 0; i < plcBoolOutputs.Count; i++)
@@ -57,6 +80,12 @@ public class RealVirtualPLCSimAdapter : MonoBehaviour
 
             bool plcVal = bridge.ReadOutputBit(item.byteOffset, item.bitIndex);
             item.signal.SetValue(plcVal);
+
+            if (plcVal != _lastBoolOutputs[i])
+            {
+                _lastBoolOutputs[i] = plcVal;
+                Debug.Log($"[RealVirtualPLCSimAdapter] Signal '{item.signal.name}' (Q{item.byteOffset}.{item.bitIndex}) -> {plcVal}");
+            }
         }
 
         for (int i = 0; i < plcFloatOutputs.Count; i++)
